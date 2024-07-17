@@ -8,17 +8,18 @@ from pre_request import pre, Rule
 
 from log import logger
 from response import ResponseCode, ResponseMessage
-from bm25_retrieval.bm25 import BM25Algorithm
-from bge_retrieval.bge import BGEAlgorithm
+from bm25.bm25_retrieval import BM25Retrieval
+from bge.bge_retrieval import BGERetrieval
+from openai_embedding.openai_retrieval import OpenAIRetrieval
 
 # 解析启动参数
 parser = argparse.ArgumentParser(description="启动参数")
-parser.add_argument('--json_files', type=str, required=True, help="JSON文件路径，多个用逗号分隔")
-parser.add_argument('--algorithm', type=str, choices=['BM25', 'BGE'], required=True, help="检索算法：目前仅支持BM25或BGE")
+parser.add_argument('--index_path', type=str, required=True, help="索引路径")
+parser.add_argument('--algorithm', type=str, choices=['BM25', 'BGE', 'OpenAI'], required=True, help="检索算法：目前仅支持BM25、BGE、OpenAI")
 parser.add_argument('--port', type=int, default=5001, help="启动的端口号，默认5001")
 args = parser.parse_args()
 
-json_file_paths = args.json_files.split(',')
+index_path = args.index_path
 retrieval_algorithm = args.algorithm
 port = args.port
 
@@ -26,17 +27,13 @@ port = args.port
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
-# 加载JSON文件内容到内存中
-documents = []
-for path in json_file_paths:
-    with open(path, 'r', encoding='utf-8') as file:
-        documents.extend(json.load(file))
-
 # 初始化检索算法
 if retrieval_algorithm == 'BM25':
-    search_engine = BM25Algorithm(json_file_paths)
+    search_engine = BM25Retrieval(index_path)
 elif retrieval_algorithm == 'BGE':
-    search_engine = BGEAlgorithm(json_file_paths)
+    search_engine = BGERetrieval(index_path)
+elif retrieval_algorithm == 'OpenAI':
+    search_engine = OpenAIRetrieval(index_path)
 else:
     raise ValueError("Unsupported retrieval algorithm")
 
@@ -66,7 +63,15 @@ def retrieval():
     top_k = params.get("top_k")
 
     # 业务处理模块
-    results = search_engine.search(question, top_k)
+    try:
+        results = search_engine.search(question, top_k)
+    except Exception as e:
+        logger.error(e)
+        fail_response = dict(code=ResponseCode.BUSINESS_FAIL, msg=ResponseMessage.BUSINESS_FAIL, data=None)
+        logger.error(fail_response)
+        response = jsonify(fail_response)
+        response.data = json.dumps(fail_response, ensure_ascii=False, indent=4)
+        return response
 
     # 成功的结果返回，格式化JSON
     success_response = dict(code=ResponseCode.SUCCESS, msg=ResponseMessage.SUCCESS, data=results)
